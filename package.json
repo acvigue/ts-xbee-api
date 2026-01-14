@@ -1,11 +1,11 @@
 {
-  "name": "ts-xbee-api",
+  "name": "@acvigue/ts-xbee-api",
   "description": "Node.js and Chrome communicate with XBee/ZigBee devices in API mode",
-  "version": "2.0.2",
-  "homepage": "https://github.com/flaviut/ts-xbee-api",
+  "version": "2.0.5",
+  "homepage": "https://github.com/acvigue/ts-xbee-api",
   "license": "MIT",
   "scripts": {
-    "build": "nx build",
+    "build": "nx build && node -e \"const p=require('./package.json');const d=require('./dist/package.json');d.dependencies=p.dependencies;delete d.scripts;delete d.devDependencies;delete d.packageManager;require('fs').writeFileSync('./dist/package.json',JSON.stringify(d,null,2))\"",
     "test": "vitest",
     "lint": "nx lint",
     "e2e": "nx e2e",
@@ -14,12 +14,8 @@
   },
   "dependencies": {
     "real-cancellable-promise": "^1.2.0",
-    "typed-emitter": "^2.1.0",
-    "@serialport/stream": "^10.2.2",
-    "@serialport/parser-readline": "^10.2.2"
-  },
-  "optionalDependencies": {
-    "serialport": "^10.2.2"
+    "tslib": "^2.6.0",
+    "typed-emitter": "^2.1.0"
   },
   "devDependencies": {
     "@nx/eslint-plugin": "16.4.0",
@@ -42,5 +38,6 @@
     "vite-tsconfig-paths": "^4.2.0",
     "vitest": "^0.32.0"
   },
-  "type": "commonjs"
+  "type": "commonjs",
+  "packageManager": "pnpm@11.0.0-dev.1005+sha512.91f84a392eea348ea4852a182912d2520273a4336f933b78cc44bc931eb999923c097e9433a9b355adc1f725725ea99082fc9f032a559df832632e764c92c798"
 }

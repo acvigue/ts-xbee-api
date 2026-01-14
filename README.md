@@ -3,8 +3,8 @@
 A user-friendly interface to [Digi's XBee](http://www.digi.com/xbee/) line of RF modules. This
 is made up of two parts:
 
-- a library for parsing and building XBee frames, especially in association with Node streams, such
-  as those provided by the [serialport](https://serialport.io/) package.
+- a library for parsing and building XBee frames, designed to work with any Node.js Duplex stream
+  (serial ports, TCP sockets, etc.)
 - a high-level API for interacting with XBee modules, including a simple API for sending and
   receiving data.
 
@@ -15,13 +15,37 @@ modified, especially as of v2.0.0.
 
 Installation: `npm install ts-xbee-api`
 
+The `XBee` class accepts any Node.js `Duplex` stream, allowing you to use it with serial ports,
+TCP sockets, or any other bidirectional stream.
+
+### With a TCP socket
+
 ```typescript
 import { XBee } from 'ts-xbee-api';
+import * as net from 'net';
 
-const xbee = await XBee.discover('/dev/ttyUSB0', [9600, 115200]);
-const routerAddress = await xbee.address();
-const remoteAddress = '0013A20040B3B3B3';
-await xbee.transmit(Uint8Array.from([0x01, 0x02, 0x03]), remoteAddress);
+const socket = net.createConnection({ host: '192.168.1.100', port: 9750 });
+const xbee = new XBee(socket);
+
+const address = await xbee.address();
+xbee.transmit(Uint8Array.from([0x01, 0x02, 0x03]), '0013A20040B3B3B3');
+
+xbee.close();
+```
+
+### With a serial port
+
+```typescript
+import { XBee } from 'ts-xbee-api';
+import { SerialPort } from 'serialport'; // npm install serialport
+
+const serialPort = new SerialPort({ path: '/dev/ttyUSB0', baudRate: 9600 });
+const xbee = new XBee(serialPort);
+
+const address = await xbee.address();
+xbee.transmit(Uint8Array.from([0x01, 0x02, 0x03]), '0013A20040B3B3B3');
+
+xbee.close();
 ```
 
 ## SUPPORTED FIRMWARES AND DEVICES

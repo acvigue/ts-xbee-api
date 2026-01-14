@@ -1,119 +1,66 @@
-import { type ErrorCallback } from '@serialport/stream';
-import { SerialPort } from 'serialport';
 import * as stream from 'stream';
 import { SpecificParsableFrame } from 'ts-xbee-api';
-import { describe, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { fromHex, toHex } from './buffer-tools';
 import * as C from './constants';
 import { XBee } from './xbee-high-level';
 
-class PrintingSerialPort extends SerialPort {
-  constructor(options: any) {
-    super(options);
-    this.on('data', (data: Buffer) => {
-      console.log(`Received ${toHex(data)}`);
-    });
-    this.write = new Proxy(this.write, {
-      apply(target, thisArg, args: any) {
-        console.log(`Sent ${toHex(args[0])}`);
-        return target.apply(thisArg, args);
-      },
-    });
-  }
-}
-
-function messageResponsePort(
+function createMockStream(
   mapping: Array<[string, string[]]>
-): typeof SerialPort {
-  return class extends stream.Duplex {
-    close(callback?: ErrorCallback): void {
-      if (callback) callback(null);
-    }
+): stream.Duplex {
+  const targetStream = new stream.PassThrough();
+  const duplex = new stream.Duplex({
+    read() {
+      return;
+    },
+    write: (data, encoding, callback) => {
+      targetStream.write(data, encoding, callback);
+    },
+  });
 
-    open(callback?: ErrorCallback): void {
-      if (callback) callback(null);
+  targetStream.on('data', (data: Buffer) => {
+    const hexData = toHex(data);
+    expect(mapping.length, 'to be done receiving messages').toBeGreaterThan(0);
+    const [expected, responses] = mapping.shift()!;
+    expect(hexData).toEqual(expected);
+    for (const response of responses) {
+      duplex.push(fromHex(response));
     }
+  });
 
-    get isOpen(): boolean {
-      return true;
-    }
-
-    drain(callback: ErrorCallback): void {
-      callback(null);
-    }
-
-    constructor() {
-      const targetStream = new stream.PassThrough();
-      super({
-        read() {
-          return;
-        },
-        write: (data, encoding, callback) => {
-          targetStream.write(data, encoding, callback);
-        },
-      });
-      targetStream.on('data', (data: Buffer) => {
-        const hexData = toHex(data);
-        expect(mapping.length, 'to be done receiving messages').toBeGreaterThan(
-          0
-        );
-        const [expected, responses] = mapping.shift()!;
-        expect(hexData).toEqual(expected);
-        for (const response of responses) {
-          this.push(fromHex(response));
-        }
-      });
-    }
-  } as any;
+  return duplex;
 }
 
 describe('XBee', function () {
-  it.skip('should discover connected devices', async function () {
-    const port = await XBee.discover(
-      '/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_AC00J6YC-if00-port0',
-      [9600, 115200],
-      PrintingSerialPort as any
-    );
-    await port.close();
-  });
-
-  it('should discover connected devices (mock)', async function () {
-    const port = await XBee.discover(
-      '/dev/ttyUSB0',
-      [9600, 115200],
-      messageResponsePort([
-        ['7e00040801415065', []], // first 9600 API message
-        ['2b', []], // second 9600 AT message
-        ['2b', []],
-        ['2b', []],
-        ['7e00040801415065', ['7e0006880141500001e4']], // first 115200 API message
-      ])
-    );
-    await port.close();
+  it('should communicate with XBee via duplex stream', async function () {
+    const mockStream = createMockStream([
+      ['7e00040801415065', ['7e0006880141500001e4']], // AT command AP / response
+    ]);
+    const xbee = new XBee(mockStream);
+    const apMode = await xbee.getParameter(C.AT_COMMAND.AP);
+    expect(apMode).toBe('01'); // API mode 1
+    xbee.close();
   });
 
   it('should scan the network', async function () {
-    const port = await XBee.withBaud(
-      '/dev/ttyUSB0',
-      115200,
-      messageResponsePort([
-        ['7e000508014e543c18', ['7e000588014e5400d4']], // set discovery timeout
+    const mockStream = createMockStream([
+      ['7e000508014e543c18', ['7e000588014e5400d4']], // set discovery timeout
+      [
+        '7e000408024e4463', // start discovery
         [
-          '7e000408024e4463', // start discovery
-          [
-            '7e001988024e4400ed920013a20041aacaf82000fffe0100c105101ef0', // node identification
-          ],
+          '7e001988024e4400ed920013a20041aacaf82000fffe0100c105101ef0', // node identification
         ],
-      ])
-    );
+      ],
+    ]);
+    const xbee = new XBee(mockStream);
 
     const devices: Array<
       SpecificParsableFrame<C.FRAME_TYPE.AT_COMMAND_RESPONSE>
     > = [];
-    for await (const device of port.scanNetwork(100)) {
+    for await (const device of xbee.scanNetwork(100)) {
       devices.push(device);
     }
-    await port.close();
+    xbee.close();
 
     expect(devices).toMatchInlineSnapshot(`
       [

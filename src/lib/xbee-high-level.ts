@@ -1,131 +1,13 @@
-import { ReadlineParser } from '@serialport/parser-readline';
-import { SerialPortStream } from '@serialport/stream';
 import type { Buffer } from 'buffer';
-import * as console from 'console';
 import { CancellablePromise } from 'real-cancellable-promise';
-import { type SerialPort } from 'serialport';
 import * as stream from 'stream';
 
 import { BufferConstructable, toHex } from './buffer-tools';
 import * as C from './constants';
 import { FRAME_TYPE as FrameType } from './constants';
 import { ParsableFrame } from './frame-parser';
-import { awaitBufferStream, awaitObjectStream } from './stream-util.js';
+import { awaitObjectStream } from './stream-util.js';
 import { SpecificParsableFrame, XBeeBuilder, XBeeParser } from './xbee-api';
-
-function promisify<A>(fn: (cb: (args: A) => void) => void): () => Promise<A> {
-  return () =>
-    new Promise((resolve) => {
-      fn((callbackArgs) => {
-        resolve(callbackArgs);
-      });
-    });
-}
-
-async function checkApi(port: SerialPortStream): Promise<boolean> {
-  const parser = port.pipe(new XBeeParser());
-  const builder = new XBeeBuilder();
-  builder.pipe(port);
-
-  builder.write({
-    type: FrameType.AT_COMMAND,
-    command: C.AT_COMMAND.AP,
-    commandParameter: [],
-  });
-  await drain(port);
-  try {
-    await awaitObjectStream(parser, 1500);
-    return true;
-  } catch (e) {
-    return false;
-  }
-}
-
-/** waits for all the data to be fully transmitted */
-async function drain(port: SerialPortStream): Promise<void> {
-  return new Promise((resolve, reject) => {
-    port.drain((err) => {
-      if (err) {
-        reject(err);
-      } else {
-        resolve();
-      }
-    });
-  });
-}
-
-async function checkAtMode(port: SerialPortStream): Promise<boolean> {
-  const parser = port.pipe(new ReadlineParser({ delimiter: '\r' }));
-  await CancellablePromise.delay(1100);
-  for (let i = 0; i < 3; i++) {
-    port.write('+');
-    await drain(port);
-  }
-  try {
-    const response = await awaitBufferStream(parser, 1500);
-    if (response.toString() !== 'OK') {
-      return false;
-    }
-
-    // returns true if the command was accepted
-    async function setAtOption(command: string): Promise<boolean> {
-      port.write(command);
-      const response = await awaitBufferStream(parser, 1500);
-      return response.toString() === 'OK';
-    }
-
-    // switch into API mode
-    if (!(await setAtOption('ATAP1\r'))) {
-      return false;
-    }
-  } catch (e) {
-    return false;
-  } finally {
-    port.unpipe(parser);
-    parser.destroy();
-  }
-  return true;
-}
-
-async function discoverBaud(
-  path: string,
-  bauds: number[],
-  SerialPortClass?: typeof SerialPort | undefined
-): Promise<SerialPortStream> {
-  if (SerialPortClass === undefined) {
-    SerialPortClass = (await import('serialport')).SerialPort;
-  }
-
-  for (const baudRate of bauds) {
-    console.log(`Trying ${baudRate} baud`);
-
-    const port = new SerialPortClass({
-      baudRate,
-      path,
-      autoOpen: false,
-    });
-    // listen on both reads and writes to port
-
-    await promisify(port.open.bind(port))();
-
-    // try API mode first
-    if (await checkApi(port)) {
-      console.log(`Found XBee at ${baudRate} baud through API`);
-      return port;
-    }
-
-    // try AT mode
-    if (await checkAtMode(port)) {
-      console.log(`Found XBee at ${baudRate} baud through AT`);
-      return port;
-    }
-
-    if (port.isOpen) {
-      await promisify(port.close.bind(port))();
-    }
-  }
-  throw new Error(`Could not find XBee at ${path}`);
-}
 
 interface AwaitResponseParams<FT extends FrameType> {
   timeoutMs: number;
@@ -156,36 +38,6 @@ export class XBee {
   private readonly builder: XBeeBuilder;
   private readonly parser: XBeeParser;
 
-  static async discover(
-    uartPath: string,
-    bauds: number[],
-    SerialPortClass?: typeof SerialPort | undefined
-  ): Promise<XBee> {
-    if (SerialPortClass === undefined) {
-      SerialPortClass = (await import('serialport')).SerialPort;
-    }
-    const port = await discoverBaud(uartPath, bauds, SerialPortClass);
-    return new XBee(port);
-  }
-
-  static async withBaud(
-    uartPath: string,
-    baud: number,
-    SerialPortClass?: typeof SerialPort | undefined
-  ): Promise<XBee> {
-    if (SerialPortClass === undefined) {
-      SerialPortClass = (await import('serialport')).SerialPort;
-    }
-    const port = new SerialPortClass({
-      baudRate: baud,
-      path: uartPath,
-      autoOpen: false,
-    });
-    await promisify(port.open.bind(port))();
-
-    return new XBee(port);
-  }
-
   constructor(private readonly serial: stream.Duplex) {
     this.builder = new XBeeBuilder();
     this.builder.pipe(serial);
@@ -196,14 +48,9 @@ export class XBee {
     });
   }
 
-  /** MUST be called when done, or the process will hang */
-  async close(): Promise<void> {
-    if ('close' in this.serial) {
-      const serial = this.serial as SerialPort;
-      await promisify(serial.close.bind(this.serial))();
-    } else {
-      this.serial.destroy();
-    }
+  /** Closes the underlying stream. MUST be called when done, or the process may hang. */
+  close(): void {
+    this.serial.destroy();
   }
 
   private filteredFrameStream<FT extends FrameType>(
