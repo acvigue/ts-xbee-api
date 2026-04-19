@@ -1,17 +1,47 @@
-export { ParsableFrame } from './lib/frame-parser';
-export { BuildableFrame } from './lib/frame-builder';
-
-export * as C from './lib/constants';
-export { FRAME_TYPE as FrameType, FRAME_TYPES } from './lib/constants';
-
-export { ChecksumMismatchError, UnknownFrameType } from './lib/errors';
+export {
+  AtCommand,
+  CommandStatus,
+  DeliveryStatus,
+  DeviceType,
+  DiscoveryStatus,
+  FrameType,
+  ModemStatus,
+  ReceiveOption,
+} from './lib/constants.js';
 
 export {
-  XBeeAPIOptions,
-  XBeeParser,
   XBeeBuilder,
-  SpecificParsableFrame,
-  SpecificBuildableFrame,
-} from './lib/xbee-api';
+  XBeeParser,
+  type BuilderOptions,
+  type ParserOptions,
+} from './lib/codec.js';
 
-export { XBee } from './lib/xbee-high-level';
+export {
+  XBee,
+  type RequestOptions,
+  type TransmitOptions,
+  type XBeeOptions,
+} from './lib/xbee.js';
+
+export * as digimesh from './lib/protocols/digimesh.js';
+
+export {
+  type IncomingFrame,
+  type IncomingFrameOf,
+  type NodeIdentification,
+} from './lib/frame-parser.js';
+
+export {
+  type OutgoingFrame,
+  type OutgoingFrameOf,
+} from './lib/frame-builder.js';
+
+export { Address16, Address64 } from './lib/address.js';
+
+export {
+  ChecksumMismatchError,
+  UnknownFrameTypeError,
+  XBeeTimeoutError,
+} from './lib/errors.js';
+
+export { fromHex, toHex } from './lib/buffer-tools.js';

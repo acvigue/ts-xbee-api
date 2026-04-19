@@ -6,9 +6,17 @@
  * Licensed under the MIT license.
  */
 
-import { FrameType, SpecificParsableFrame } from '../index';
-import * as C from './constants';
-import { BufferReader } from './buffer-tools';
+import {
+  ANALOG_CHANNELS,
+  AtCommand,
+  CommandStatus,
+  DIGITAL_CHANNELS,
+  FrameType,
+} from './constants.js';
+import { BufferReader } from './buffer-tools.js';
+
+type Uint8 = number;
+type Uint16 = number;
 
 type NodeIdentificationTarget = {
   remote16: string;
@@ -21,14 +29,12 @@ type NodeIdentificationTarget = {
   digiManufacturerID?: string;
 };
 
-const parseNodeIdentificationPayload = function (
+function parseNodeIdentificationPayload(
   frame: NodeIdentificationTarget,
   reader: BufferReader,
 ): void {
   frame.remote16 = reader.nextString(2, 'hex');
   frame.remote64 = reader.nextString(8, 'hex');
-
-  // Extract the NI string from the buffer
   frame.nodeIdentifier = reader.nextStringZero('utf8');
 
   if (reader.buf.length > reader.tell()) {
@@ -38,7 +44,7 @@ const parseNodeIdentificationPayload = function (
     frame.digiProfileID = reader.nextString(2, 'hex');
     frame.digiManufacturerID = reader.nextString(2, 'hex');
   }
-};
+}
 
 type IOSampleTarget = {
   digitalSamples?: Record<string, number>;
@@ -47,15 +53,15 @@ type IOSampleTarget = {
   commandStatus?: number;
 };
 
-const ParseIOSamplePayload = function (
+function parseIOSamplePayload(
   frame: IOSampleTarget,
   reader: BufferReader,
-  options: { vref_adc?: number },
+  options: { adcReferenceMv?: number | null },
 ): void {
   frame.digitalSamples = {};
   frame.analogSamples = {};
   frame.numSamples = 0;
-  // When parsing responses to ATIS, there is no data to parse if IO lines are not enabled
+  // When parsing responses to ATIS, there is no data if IO lines are not enabled
   if (frame.commandStatus !== undefined && frame.commandStatus !== 0) return;
   frame.numSamples = reader.nextUInt8();
   const mskD = reader.nextUInt16BE();
@@ -63,39 +69,40 @@ const ParseIOSamplePayload = function (
 
   if (mskD > 0) {
     const valD = reader.nextUInt16BE();
-    for (const dbit of Object.keys(C.DIGITAL_CHANNELS.MASK).map(
-      Number,
-    ) as Array<keyof typeof C.DIGITAL_CHANNELS.MASK>) {
+    for (const dbit of Object.keys(DIGITAL_CHANNELS.MASK).map(Number) as Array<
+      keyof typeof DIGITAL_CHANNELS.MASK
+    >) {
       if ((mskD & (1 << dbit)) >> dbit) {
-        frame.digitalSamples[C.DIGITAL_CHANNELS.MASK[dbit][0]] =
+        frame.digitalSamples[DIGITAL_CHANNELS.MASK[dbit][0]] =
           (valD & (1 << dbit)) >> dbit;
       }
     }
   }
 
   if (mskA > 0) {
-    for (const abit of Object.keys(C.ANALOG_CHANNELS.MASK).map(Number) as Array<
-      keyof typeof C.ANALOG_CHANNELS.MASK
+    for (const abit of Object.keys(ANALOG_CHANNELS.MASK).map(Number) as Array<
+      keyof typeof ANALOG_CHANNELS.MASK
     >) {
       if ((mskA & (1 << abit)) >> abit) {
         const valA = reader.nextUInt16BE();
-
-        if (options.vref_adc == null) {
-          frame.analogSamples[C.ANALOG_CHANNELS.MASK[abit][0]] = valA;
+        if (options.adcReferenceMv == null) {
+          frame.analogSamples[ANALOG_CHANNELS.MASK[abit][0]] = valA;
         } else {
-          // Convert to mV, resolution is < 1mV, so rounding is OK
-          frame.analogSamples[C.ANALOG_CHANNELS.MASK[abit][0]] = Math.round(
-            (valA * options.vref_adc) / 1023,
+          frame.analogSamples[ANALOG_CHANNELS.MASK[abit][0]] = Math.round(
+            (valA * options.adcReferenceMv) / 1023,
           );
         }
       }
     }
   }
-};
+}
 
-// Series 1 Support
-const received16BitPacketIO = function (
-  frame: SpecificParsableFrame<FrameType.RX_PACKET_16_IO>,
+type LegacyChannelsKey =
+  | `ADC${0 | 1 | 2 | 3 | 4 | 5}`
+  | `DIO${0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8}`;
+
+function parseReceived16BitPacketIO(
+  frame: IncomingFrameOf<FrameType.RxPacket16Io>,
   reader: BufferReader,
 ): void {
   const data = {
@@ -106,22 +113,16 @@ const received16BitPacketIO = function (
     digitalSamples: [] as string[],
   };
 
-  // analog channels
   for (let a = 0; a <= 5; a++) {
-    // exponent looks odd here because analog pins start at 0000001000000000
     if (data.channelMask & Math.pow(2, a + 9)) {
       data.channels[`ADC${a}` as LegacyChannelsKey] = 1;
     }
   }
 
-  // if any of the DIO pins are active, parse the digital samples
-  // 0x1ff = 0000000111111111
   if (data.channelMask & 0x1ff) {
     for (let i = 0; i < data.sampleQuantity; i++) {
       data.digitalSamples.push(reader.nextUInt16BE().toString(2));
     }
-
-    // digital channels
     for (let d = 0; d <= 8; d++) {
       if (data.channelMask & Math.pow(2, d)) {
         data.channels[`DIO${d}` as LegacyChannelsKey] = 1;
@@ -133,7 +134,6 @@ const received16BitPacketIO = function (
     const sample = {} as Record<LegacyChannelsKey, number>;
     for (let j = 0; j <= 5; j++) {
       if (data.channels[`ADC${j}` as LegacyChannelsKey]) {
-        // starts at the 7th byte and moved down by the Digital Samples section
         sample[`ADC${j}` as LegacyChannelsKey] = reader.nextUInt16BE();
       }
     }
@@ -141,60 +141,52 @@ const received16BitPacketIO = function (
   }
 
   frame.data = data;
-};
+}
 
-type Uint8 = number;
-type Uint16 = number;
-
-const parseAtCommand = (
+function parseAtCommand(
   frame:
     | {
-        type: C.FRAME_TYPE.AT_COMMAND;
-        /** sequence number of the frame */
+        type: FrameType.AtCommand;
         id: Uint8;
-        command: C.AT_COMMAND;
-        commandParameter: Uint8Array; // Can either be string or byte array.
+        command: AtCommand;
+        commandParameter: Uint8Array;
       }
     | {
-        type: C.FRAME_TYPE.AT_COMMAND_QUEUE_PARAMETER_VALUE;
-        /** sequence number of the frame */
+        type: FrameType.AtCommandQueueParameterValue;
         id: Uint8;
-        command: C.AT_COMMAND;
+        command: AtCommand;
         commandParameter: Uint8Array;
       },
   reader: BufferReader,
-): void => {
+): void {
   frame.id = reader.nextUInt8();
-  frame.command = reader.nextString(2, 'utf8') as C.AT_COMMAND;
+  frame.command = reader.nextString(2, 'utf8') as AtCommand;
   frame.commandParameter = reader.nextAll();
-};
-type LegacyChannelsKey =
-  | `ADC${0 | 1 | 2 | 3 | 4 | 5}`
-  | `DIO${0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8}`;
+}
 
-export type NodeIdentification<BufferType> = {
-  remote16: BufferType; // 16-bit
-  remote64: BufferType; // 64-bit
+export type NodeIdentification = {
+  remote16: string;
+  remote64: string;
   nodeIdentifier: string;
 } & (
   | Record<string, never>
   | {
-      remoteParent16: BufferType; // 8-bit
+      remoteParent16: string;
       deviceType: Uint8;
       sourceEvent: Uint8;
-      digiProfileID: BufferType; // 8-bit
-      digiManufacturerID: BufferType; // 8-bit
+      digiProfileID: string;
+      digiManufacturerID: string;
     }
 );
 
 const frameParser = {
-  [C.FRAME_TYPE.NODE_IDENTIFICATION]: (
+  [FrameType.NodeIdentification]: (
     frame: {
-      type: C.FRAME_TYPE.NODE_IDENTIFICATION;
-      sender64: string; // 64-bit
-      sender16: string; // 16-bit
+      type: FrameType.NodeIdentification;
+      sender64: string;
+      sender16: string;
       receiveOptions: Uint8;
-    } & NodeIdentification<string>,
+    } & NodeIdentification,
     reader: BufferReader,
   ) => {
     frame.sender64 = reader.nextString(8, 'hex');
@@ -203,11 +195,11 @@ const frameParser = {
     parseNodeIdentificationPayload(frame, reader);
   },
 
-  [C.FRAME_TYPE.ZIGBEE_RECEIVE_PACKET]: (
+  [FrameType.ZigbeeReceivePacket]: (
     frame: {
-      type: C.FRAME_TYPE.ZIGBEE_RECEIVE_PACKET;
-      remote64: string; // 64-bit
-      remote16: string; // 16-bit
+      type: FrameType.ZigbeeReceivePacket;
+      remote64: string;
+      remote16: string;
       receiveOptions: number;
       data: Uint8Array;
     },
@@ -219,15 +211,15 @@ const frameParser = {
     frame.data = reader.nextAll();
   },
 
-  [C.FRAME_TYPE.ZIGBEE_EXPLICIT_RX]: (
+  [FrameType.ZigbeeExplicitRx]: (
     frame: {
-      type: C.FRAME_TYPE.ZIGBEE_EXPLICIT_RX;
-      remote64: string; // 64-bit
-      remote16: string; // 16-bit
-      sourceEndpoint: string; // 8-bit
-      destinationEndpoint: string; // 8-bit
-      clusterId: string; // 16-bit
-      profileId: string; // 16-bit
+      type: FrameType.ZigbeeExplicitRx;
+      remote64: string;
+      remote16: string;
+      sourceEndpoint: string;
+      destinationEndpoint: string;
+      clusterId: string;
+      profileId: string;
       receiveOptions: Uint8;
       data: Uint8Array;
     },
@@ -243,11 +235,11 @@ const frameParser = {
     frame.data = reader.nextAll();
   },
 
-  [C.FRAME_TYPE.XBEE_SENSOR_READ]: (
+  [FrameType.XbeeSensorRead]: (
     frame: {
-      type: C.FRAME_TYPE.XBEE_SENSOR_READ;
-      remote64: string; // 64-bit
-      remote16: string; // 16-bit
+      type: FrameType.XbeeSensorRead;
+      remote64: string;
+      remote16: string;
       receiveOptions: Uint8;
       sensors: Uint8;
       sensorValues: {
@@ -310,9 +302,9 @@ const frameParser = {
     }
   },
 
-  [C.FRAME_TYPE.MODEM_STATUS]: (
+  [FrameType.ModemStatus]: (
     frame: {
-      type: C.FRAME_TYPE.MODEM_STATUS;
+      type: FrameType.ModemStatus;
       modemStatus: number;
     },
     reader: BufferReader,
@@ -320,54 +312,53 @@ const frameParser = {
     frame.modemStatus = reader.nextUInt8();
   },
 
-  [C.FRAME_TYPE.ZIGBEE_IO_DATA_SAMPLE_RX]: (
+  [FrameType.ZigbeeIoDataSampleRx]: (
     frame: {
-      type: C.FRAME_TYPE.ZIGBEE_IO_DATA_SAMPLE_RX;
-      remote64: string; // 64-bit
-      remote16: string; // 16-bit
+      type: FrameType.ZigbeeIoDataSampleRx;
+      remote64: string;
+      remote16: string;
       receiveOptions: Uint8;
     } & (
       | Record<string, never>
       | {
           receiveOptions: 0;
-          digitalSamples: Record<number, number>;
-          analogSamples: Record<number, number>;
+          digitalSamples: Record<string, number>;
+          analogSamples: Record<string, number>;
           numSamples: Uint8;
         }
     ),
     reader: BufferReader,
-    options: { vref_adc?: number },
+    options: { adcReferenceMv?: number | null },
   ) => {
     frame.remote64 = reader.nextString(8, 'hex');
     frame.remote16 = reader.nextString(2, 'hex');
     frame.receiveOptions = reader.nextUInt8();
-    ParseIOSamplePayload(frame as unknown as IOSampleTarget, reader, options);
+    parseIOSamplePayload(frame as unknown as IOSampleTarget, reader, options);
   },
 
-  [C.FRAME_TYPE.AT_COMMAND_RESPONSE]: (
+  [FrameType.AtCommandResponse]: (
     frame: {
-      // aka Local AT Command Response
-      type: C.FRAME_TYPE.AT_COMMAND_RESPONSE;
+      type: FrameType.AtCommandResponse;
       id: Uint8;
       commandStatus: Uint8;
     } & (
       | {
-          command: C.AT_COMMAND.ND;
-          nodeIdentification: NodeIdentification<string>;
+          command: AtCommand.ND;
+          nodeIdentification: NodeIdentification;
         }
       | {
-          command: Exclude<C.AT_COMMAND, C.AT_COMMAND.ND>;
+          command: Exclude<AtCommand, AtCommand.ND>;
           commandData: Uint8Array;
         }
     ),
     reader: BufferReader,
   ) => {
     frame.id = reader.nextUInt8();
-    frame.command = reader.nextString(2, 'utf8') as C.AT_COMMAND;
+    frame.command = reader.nextString(2, 'utf8') as AtCommand;
     frame.commandStatus = reader.nextUInt8();
     if (
       frame.command === 'ND' &&
-      frame.commandStatus === C.COMMAND_STATUS.OK &&
+      frame.commandStatus === CommandStatus.Ok &&
       reader.buf.length > reader.tell()
     ) {
       const ndFrame = frame as unknown as {
@@ -381,37 +372,36 @@ const frameParser = {
     }
   },
 
-  [C.FRAME_TYPE.REMOTE_COMMAND_RESPONSE]: (
+  [FrameType.RemoteCommandResponse]: (
     frame: {
-      type: C.FRAME_TYPE.REMOTE_COMMAND_RESPONSE;
-      /** sequence number of the frame */
+      type: FrameType.RemoteCommandResponse;
       id: Uint8;
-      remote64: string; // 64-bit
-      remote16: string; // 16-bit
-      commandStatus: Uint8; // 0 means success
+      remote64: string;
+      remote16: string;
+      commandStatus: Uint8;
     } & (
       | {
-          command: C.AT_COMMAND.ND;
-          nodeIdentification: NodeIdentification<string>;
+          command: AtCommand.ND;
+          nodeIdentification: NodeIdentification;
         }
       | {
-          command: Exclude<C.AT_COMMAND, C.AT_COMMAND.ND>;
+          command: Exclude<AtCommand, AtCommand.ND>;
           commandData: Uint8Array;
         }
     ),
     reader: BufferReader,
-    options: { vref_adc?: number },
+    options: { adcReferenceMv?: number | null },
   ) => {
     frame.id = reader.nextUInt8();
     frame.remote64 = reader.nextString(8, 'hex');
     frame.remote16 = reader.nextString(2, 'hex');
-    frame.command = reader.nextString(2, 'utf8') as C.AT_COMMAND;
+    frame.command = reader.nextString(2, 'utf8') as AtCommand;
     frame.commandStatus = reader.nextUInt8();
     if (frame.command === 'IS') {
-      ParseIOSamplePayload(frame as unknown as IOSampleTarget, reader, options);
+      parseIOSamplePayload(frame as unknown as IOSampleTarget, reader, options);
     } else if (
       frame.command === 'ND' &&
-      frame.commandStatus === C.COMMAND_STATUS.OK
+      frame.commandStatus === CommandStatus.Ok
     ) {
       const ndFrame = frame as unknown as {
         nodeIdentification: NodeIdentificationTarget;
@@ -424,12 +414,11 @@ const frameParser = {
     }
   },
 
-  [C.FRAME_TYPE.ZIGBEE_TRANSMIT_STATUS]: (
+  [FrameType.ZigbeeTransmitStatus]: (
     frame: {
-      type: C.FRAME_TYPE.ZIGBEE_TRANSMIT_STATUS;
-      /** sequence number of the frame */
+      type: FrameType.ZigbeeTransmitStatus;
       id: Uint8;
-      remote16: string; // 16-bit
+      remote16: string;
       transmitRetryCount: number;
       deliveryStatus: number;
       discoveryStatus: number;
@@ -443,11 +432,11 @@ const frameParser = {
     frame.discoveryStatus = reader.nextUInt8();
   },
 
-  [C.FRAME_TYPE.ROUTE_RECORD]: (
+  [FrameType.RouteRecord]: (
     frame: {
-      type: C.FRAME_TYPE.ROUTE_RECORD;
-      remote64: string; // 64-bit
-      remote16: string; // 16-bit
+      type: FrameType.RouteRecord;
+      remote64: string;
+      remote16: string;
       receiveOptions: Uint8;
       hopCount: Uint8;
       addresses: Uint16[];
@@ -464,18 +453,17 @@ const frameParser = {
     }
   },
 
-  [C.FRAME_TYPE.AT_COMMAND]: parseAtCommand,
-  [C.FRAME_TYPE.AT_COMMAND_QUEUE_PARAMETER_VALUE]: parseAtCommand,
+  [FrameType.AtCommand]: parseAtCommand,
+  [FrameType.AtCommandQueueParameterValue]: parseAtCommand,
 
-  [C.FRAME_TYPE.REMOTE_AT_COMMAND_REQUEST]: (
+  [FrameType.RemoteAtCommandRequest]: (
     frame: {
-      type: C.FRAME_TYPE.REMOTE_AT_COMMAND_REQUEST;
-      /** sequence number of the frame */
+      type: FrameType.RemoteAtCommandRequest;
       id: Uint8;
-      destination64: string; // 64-bit
-      destination16: string; // 16-bit
+      destination64: string;
+      destination16: string;
       remoteCommandOptions: Uint8;
-      command: C.AT_COMMAND;
+      command: AtCommand;
       commandParameter: Uint8Array;
     },
     reader: BufferReader,
@@ -484,18 +472,16 @@ const frameParser = {
     frame.destination64 = reader.nextString(8, 'hex');
     frame.destination16 = reader.nextString(2, 'hex');
     frame.remoteCommandOptions = reader.nextUInt8();
-    frame.command = reader.nextString(2, 'utf8') as C.AT_COMMAND;
+    frame.command = reader.nextString(2, 'utf8') as AtCommand;
     frame.commandParameter = reader.nextAll();
   },
 
-  [C.FRAME_TYPE.ZIGBEE_TRANSMIT_REQUEST]: (
+  [FrameType.ZigbeeTransmitRequest]: (
     frame: {
-      // aka Extended Transmit Status
-      type: C.FRAME_TYPE.ZIGBEE_TRANSMIT_REQUEST;
-      /** sequence number of the frame */
+      type: FrameType.ZigbeeTransmitRequest;
       id: Uint8;
-      destination64: string; // 64-bit
-      destination16: string; // 16-bit
+      destination64: string;
+      destination16: string;
       broadcastRadius: Uint8;
       options: Uint8;
       data: Uint8Array;
@@ -510,13 +496,12 @@ const frameParser = {
     frame.data = reader.nextAll();
   },
 
-  [C.FRAME_TYPE.EXPLICIT_ADDRESSING_ZIGBEE_COMMAND_FRAME]: (
+  [FrameType.ExplicitAddressingZigbeeCommandFrame]: (
     frame: {
-      type: C.FRAME_TYPE.EXPLICIT_ADDRESSING_ZIGBEE_COMMAND_FRAME;
-      /** sequence number of the frame */
+      type: FrameType.ExplicitAddressingZigbeeCommandFrame;
       id: Uint8;
-      destination64: string; // 64-bit
-      destination16: string; // 16-bit
+      destination64: string;
+      destination16: string;
       sourceEndpoint: Uint8;
       destinationEndpoint: Uint8;
       clusterId: Uint16;
@@ -539,13 +524,12 @@ const frameParser = {
     frame.data = reader.nextAll();
   },
 
-  [C.FRAME_TYPE.TX_REQUEST_64]: (
+  [FrameType.TxRequest64]: (
     frame: {
-      type: C.FRAME_TYPE.TX_REQUEST_64;
-      /** sequence number of the frame */
+      type: FrameType.TxRequest64;
       id: Uint8;
-      destination64: string; // 64-bit
-      options: number; // 0x00 is default
+      destination64: string;
+      options: number;
       data: Uint8Array;
     },
     reader: BufferReader,
@@ -556,13 +540,12 @@ const frameParser = {
     frame.data = reader.nextAll();
   },
 
-  [C.FRAME_TYPE.TX_REQUEST_16]: (
+  [FrameType.TxRequest16]: (
     frame: {
-      type: C.FRAME_TYPE.TX_REQUEST_16;
-      /** sequence number of the frame */
+      type: FrameType.TxRequest16;
       id: Uint8;
-      destination16: string; // 16-bit
-      options: number; // 0x00 is default
+      destination16: string;
+      options: number;
       data: Uint8Array;
     },
     reader: BufferReader,
@@ -573,10 +556,9 @@ const frameParser = {
     frame.data = reader.nextAll();
   },
 
-  [C.FRAME_TYPE.TX_STATUS]: (
+  [FrameType.TxStatus]: (
     frame: {
-      type: C.FRAME_TYPE.TX_STATUS;
-      /** sequence number of the frame */
+      type: FrameType.TxStatus;
       id: Uint8;
       deliveryStatus: Uint8;
     },
@@ -586,10 +568,10 @@ const frameParser = {
     frame.deliveryStatus = reader.nextUInt8();
   },
 
-  [C.FRAME_TYPE.RX_PACKET_64]: (
+  [FrameType.RxPacket64]: (
     frame: {
-      type: C.FRAME_TYPE.RX_PACKET_64;
-      remote64: string; // 64-bit
+      type: FrameType.RxPacket64;
+      remote64: string;
       rssi: Uint8;
       receiveOptions: Uint8;
       data: Uint8Array;
@@ -602,10 +584,10 @@ const frameParser = {
     frame.data = reader.nextAll();
   },
 
-  [C.FRAME_TYPE.RX_PACKET_16]: (
+  [FrameType.RxPacket16]: (
     frame: {
-      type: C.FRAME_TYPE.RX_PACKET_16;
-      remote16: string; // 16-bit
+      type: FrameType.RxPacket16;
+      remote16: string;
       rssi: Uint8;
       receiveOptions: Uint8;
       data: Uint8Array;
@@ -618,10 +600,10 @@ const frameParser = {
     frame.data = reader.nextAll();
   },
 
-  [C.FRAME_TYPE.RX_PACKET_64_IO]: (
+  [FrameType.RxPacket64Io]: (
     frame: {
-      type: C.FRAME_TYPE.RX_PACKET_64_IO;
-      remote64: string; // 64-bit
+      type: FrameType.RxPacket64Io;
+      remote64: string;
       rssi: Uint8;
       receiveOptions: Uint8;
       data: Uint8Array;
@@ -632,13 +614,12 @@ const frameParser = {
     frame.rssi = reader.nextUInt8();
     frame.receiveOptions = reader.nextUInt8();
     frame.data = reader.nextAll();
-    // TODO: Parse I/O Data?
   },
 
-  [C.FRAME_TYPE.RX_PACKET_16_IO]: (
+  [FrameType.RxPacket16Io]: (
     frame: {
-      type: C.FRAME_TYPE.RX_PACKET_16_IO;
-      remote16: string; // 16-bit
+      type: FrameType.RxPacket16Io;
+      remote16: string;
       rssi: Uint8;
       receiveOptions: Uint8;
       data: {
@@ -654,11 +635,17 @@ const frameParser = {
     frame.remote16 = reader.nextString(2, 'hex');
     frame.rssi = reader.nextUInt8();
     frame.receiveOptions = reader.nextUInt8();
-    received16BitPacketIO(frame, reader);
+    parseReceived16BitPacketIO(frame, reader);
   },
 };
+
 export default frameParser;
 
-export type ParsableFrame = Parameters<
+export type IncomingFrame = Parameters<
   (typeof frameParser)[keyof typeof frameParser]
 >[0];
+
+export type IncomingFrameOf<FT extends FrameType> = Extract<
+  IncomingFrame,
+  { type: FT }
+>;

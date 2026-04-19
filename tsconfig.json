@@ -3,21 +3,19 @@
     "rootDir": ".",
     "sourceMap": true,
     "declaration": false,
-    "moduleResolution": "node10",
+    "moduleResolution": "NodeNext",
     "ignoreDeprecations": "6.0",
-    "emitDecoratorMetadata": true,
-    "experimentalDecorators": true,
     "importHelpers": true,
-    "target": "es2020",
-    "module": "commonjs",
-    "lib": ["es2020", "dom"],
+    "target": "ES2023",
+    "module": "NodeNext",
+    "lib": ["ES2023"],
     "skipLibCheck": true,
     "skipDefaultLibCheck": true,
     "baseUrl": ".",
     "strict": true,
     "noImplicitAny": true,
     "paths": {
-      "ts-xbee-api": ["src/index.ts"]
+      "@acvigue/ts-xbee-api": ["src/index.ts"]
     },
     "types": ["vitest"]
   },

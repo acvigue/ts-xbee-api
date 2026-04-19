@@ -1,18 +1,13 @@
-// cross-platform buffer writer and reader. Eliminates dependency on buffer-builder and buffer-reader,
-// and avoids the need to use polyfills for nodejs Buffer in the browser.
+// Cross-platform byte writer and reader. Internal to the package — public API
+// should expose only Uint8Array.
 
-export type BufferConstructable =
-  | number[]
-  | ArrayBuffer
-  | Uint8Array
-  | Buffer
-  | string;
+/** Byte-like input that builder helpers can accept internally. */
+export type ByteInput = number[] | ArrayBuffer | Uint8Array | Buffer | string;
 
-type Encodings = 'utf8' | 'hex';
+type Encoding = 'utf8' | 'hex';
 
-// https://stackoverflow.com/a/69585881/2299084
 const HEX_STRINGS = '0123456789abcdef';
-const MAP_HEX = {
+const MAP_HEX: Record<string, number> = {
   0: 0,
   1: 1,
   2: 2,
@@ -37,23 +32,17 @@ const MAP_HEX = {
   F: 15,
 };
 
-// Fast Uint8Array to hex
 export function toHex(bytes: ArrayLike<number>): string {
   return Array.from(bytes || [])
     .map((b) => HEX_STRINGS[b >> 4] + HEX_STRINGS[b & 15])
     .join('');
 }
 
-// Mimics Buffer.from(x, 'hex') logic
-// Stops on first non-hex string and returns
-// https://github.com/nodejs/node/blob/v14.18.1/src/string_bytes.cc#L246-L261
 export function fromHex(hexString: string): Uint8Array {
   const bytes = new Uint8Array(Math.floor((hexString || '').length / 2));
   let i;
   for (i = 0; i < bytes.length; i++) {
-    // @ts-expect-error
     const a = MAP_HEX[hexString[i * 2]];
-    // @ts-expect-error
     const b = MAP_HEX[hexString[i * 2 + 1]];
     if (a === undefined || b === undefined) {
       break;
@@ -85,7 +74,7 @@ export class BufferBuilder {
     return this;
   }
 
-  appendBuffer(data: BufferConstructable): BufferBuilder {
+  appendBuffer(data: ByteInput): BufferBuilder {
     let buf: Uint8Array;
     if (Array.isArray(data)) {
       buf = Uint8Array.from(data);
@@ -100,11 +89,8 @@ export class BufferBuilder {
     return this;
   }
 
-  appendString(
-    data: BufferConstructable,
-    encoding: Encodings = 'utf8',
-  ): BufferBuilder {
-    let buf: BufferConstructable = data;
+  appendString(data: ByteInput, encoding: Encoding = 'utf8'): BufferBuilder {
+    let buf: ByteInput = data;
     if (encoding === 'hex') {
       buf = fromHex(data as string);
     } else if (encoding === 'utf8' && typeof data === 'string') {
@@ -127,7 +113,7 @@ export class BufferReader {
     return this._buffer;
   }
 
-  nextString(length: number, encoding: Encodings = 'utf8'): string {
+  nextString(length: number, encoding: Encoding = 'utf8'): string {
     const result = this._buffer.slice(this._offset, this._offset + length);
     this._offset += length;
     if (encoding === 'utf8') {
@@ -141,7 +127,7 @@ export class BufferReader {
     return this._offset;
   }
 
-  nextStringZero(encoding: Encodings = 'utf8'): string {
+  nextStringZero(encoding: Encoding = 'utf8'): string {
     let length = 0;
     for (let i = this._offset; i < this._buffer.length; i++) {
       if (this._buffer[i] === 0) {

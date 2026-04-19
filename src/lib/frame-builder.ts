@@ -6,233 +6,236 @@
  * Licensed under the MIT license.
  */
 
-import { BufferBuilder, BufferConstructable } from './buffer-tools';
-
-import * as C from './constants';
+import { BufferBuilder } from './buffer-tools.js';
+import {
+  AtCommand,
+  BROADCAST_16_XB,
+  FrameType,
+  ReceiveOption,
+  UNKNOWN_16,
+  UNKNOWN_64,
+} from './constants.js';
 
 type Uint8 = number;
 type Uint16 = number;
 
-function atCommandParser(
-  frame:
-    | {
-        type: C.FRAME_TYPE.AT_COMMAND;
-        /** sequence number of the frame */
-        id?: Uint8;
-        command: C.AT_COMMAND;
-        commandParameter: BufferConstructable;
-      }
-    | {
-        type: C.FRAME_TYPE.AT_COMMAND_QUEUE_PARAMETER_VALUE;
-        /** sequence number of the frame */
-        id?: Uint8;
-        command: C.AT_COMMAND;
-        commandParameter: BufferConstructable;
-      },
-  builder: BufferBuilder,
-): void {
-  builder.appendUInt8(frame.type);
-  // @ts-expect-error  this is being called in a context where `this` is set to the FrameBuilder object
-  builder.appendUInt8(this.getFrameId(frame));
-  builder.appendString(frame.command, 'utf8');
-  builder.appendBuffer(frame.commandParameter);
-}
+type AtCommandFrame =
+  | {
+      type: FrameType.AtCommand;
+      id?: Uint8;
+      command: AtCommand;
+      commandParameter: Uint8Array;
+    }
+  | {
+      type: FrameType.AtCommandQueueParameterValue;
+      id?: Uint8;
+      command: AtCommand;
+      commandParameter: Uint8Array;
+    };
 
-function FrameBuilder() {
-  return {
-    frameId: 0,
-    nextFrameId: function nextFrameId() {
-      this.frameId ??= 1;
-      this.frameId = this.frameId >= 0xff ? 1 : ++this.frameId;
-      return this.frameId;
-    },
+type RemoteAtCommandFrame = {
+  type: FrameType.RemoteAtCommandRequest;
+  id?: Uint8;
+  destination64?: string;
+  destination16?: string;
+  remoteCommandOptions?: number;
+  command: AtCommand;
+  commandParameter: Uint8Array;
+};
 
-    getFrameId: function getFrameId(frame: { id?: Uint8 }): Uint8 {
-      frame.id =
-        frame.id != null || frame.id === 0 ? frame.id : this.nextFrameId();
-      return frame.id;
-    },
+type ZigbeeTransmitRequestFrame = {
+  type: FrameType.ZigbeeTransmitRequest;
+  id?: Uint8;
+  destination64?: string;
+  destination16?: string;
+  broadcastRadius?: Uint8;
+  options?: Uint8;
+  data: Uint8Array;
+};
 
-    [C.FRAME_TYPE.AT_COMMAND]: atCommandParser,
-    [C.FRAME_TYPE.AT_COMMAND_QUEUE_PARAMETER_VALUE]: atCommandParser,
+type ExplicitAddressingFrame = {
+  type: FrameType.ExplicitAddressingZigbeeCommandFrame;
+  id?: Uint8;
+  destination64?: string;
+  destination16?: string;
+  sourceEndpoint: Uint8;
+  destinationEndpoint: Uint8;
+  clusterId: Uint16 | string;
+  profileId: Uint16 | string;
+  broadcastRadius?: Uint8;
+  options?: Uint8;
+  data: Uint8Array;
+};
 
-    [C.FRAME_TYPE.REMOTE_AT_COMMAND_REQUEST]: function (
-      frame: {
-        type: C.FRAME_TYPE.REMOTE_AT_COMMAND_REQUEST;
-        /** sequence number of the frame */
-        id?: Uint8;
-        destination64?: BufferConstructable; // 64-bit, optional, default UNKNOWN_64
-        destination16?: BufferConstructable; // 16-bit, optional, default UNKNOWN_16
-        remoteCommandOptions?: number; // optional, 0x02 is default
-        command: C.AT_COMMAND;
-        commandParameter: BufferConstructable;
-      },
-      builder: BufferBuilder,
-    ) {
-      builder.appendUInt8(frame.type);
-      builder.appendUInt8(this.getFrameId(frame));
-      builder.appendString(frame.destination64 || C.UNKNOWN_64, 'hex');
-      builder.appendString(frame.destination16 || C.UNKNOWN_16, 'hex');
-      builder.appendUInt8(frame.remoteCommandOptions || 0x02);
-      builder.appendString(frame.command, 'utf8');
-      builder.appendBuffer(frame.commandParameter);
-    },
+type CreateSourceRouteFrame = {
+  type: FrameType.CreateSourceRoute;
+  id?: Uint8;
+  destination64: string;
+  destination16: string;
+  addresses: number[];
+};
 
-    [C.FRAME_TYPE.ZIGBEE_TRANSMIT_REQUEST]: function (
-      frame: {
-        // aka Extended Transmit Status
-        type: C.FRAME_TYPE.ZIGBEE_TRANSMIT_REQUEST;
-        /** sequence number of the frame */
-        id?: Uint8;
-        destination64?: BufferConstructable; // 64-bit
-        destination16?: BufferConstructable; // 16-bit
-        broadcastRadius?: Uint8;
-        options?: Uint8;
-        data: BufferConstructable;
-      },
-      builder: BufferBuilder,
-    ) {
-      builder.appendUInt8(frame.type);
-      builder.appendUInt8(this.getFrameId(frame));
-      builder.appendString(frame.destination64 || C.UNKNOWN_64, 'hex');
-      builder.appendString(frame.destination16 || C.UNKNOWN_16, 'hex');
-      builder.appendUInt8(frame.broadcastRadius || 0x00);
-      builder.appendUInt8(frame.options || 0x00);
-      builder.appendBuffer(frame.data);
-    },
+type TxRequest64Frame = {
+  type: FrameType.TxRequest64;
+  id?: Uint8;
+  destination64?: string;
+  options?: number;
+  data: Uint8Array;
+};
 
-    [C.FRAME_TYPE.EXPLICIT_ADDRESSING_ZIGBEE_COMMAND_FRAME]: function (
-      frame: {
-        type: C.FRAME_TYPE.EXPLICIT_ADDRESSING_ZIGBEE_COMMAND_FRAME;
-        /** sequence number of the frame */
-        id?: Uint8;
-        destination64?: BufferConstructable; // 64-bit, optional, default UNKNOWN_64
-        destination16?: BufferConstructable; // 16-bit, optional, default UNKNOWN_16
-        sourceEndpoint: Uint8;
-        destinationEndpoint: Uint8;
-        clusterId: Uint16 | BufferConstructable; // 16-bit
-        profileId: Uint16 | BufferConstructable; // 16-bit
-        broadcastRadius?: Uint8; // default 0
-        options?: Uint8; // default 0
-        data: BufferConstructable;
-      },
-      builder: BufferBuilder,
-    ) {
-      builder.appendUInt8(frame.type);
-      builder.appendUInt8(this.getFrameId(frame));
-      builder.appendString(frame.destination64 || C.UNKNOWN_64, 'hex');
-      builder.appendString(frame.destination16 || C.UNKNOWN_16, 'hex');
-      builder.appendUInt8(frame.sourceEndpoint);
-      builder.appendUInt8(frame.destinationEndpoint);
+type TxRequest16Frame = {
+  type: FrameType.TxRequest16;
+  id?: Uint8;
+  destination16?: string;
+  options?: number;
+  data: Uint8Array;
+};
 
-      if (typeof frame.clusterId === 'number') {
-        builder.appendUInt16BE(frame.clusterId);
-      } else {
-        builder.appendString(frame.clusterId, 'hex');
-      }
+type ZigbeeReceivePacketFrame = {
+  type: FrameType.ZigbeeReceivePacket;
+  sender64?: string;
+  sender16?: string;
+  receiveOptions?: Set<ReceiveOption>;
+  data: Uint8Array;
+};
 
-      if (typeof frame.profileId === 'number') {
-        builder.appendUInt16BE(frame.profileId);
-      } else {
-        builder.appendString(frame.profileId, 'hex');
-      }
+export type OutgoingFrame =
+  | AtCommandFrame
+  | RemoteAtCommandFrame
+  | ZigbeeTransmitRequestFrame
+  | ExplicitAddressingFrame
+  | CreateSourceRouteFrame
+  | TxRequest64Frame
+  | TxRequest16Frame
+  | ZigbeeReceivePacketFrame;
 
-      builder.appendUInt8(frame.broadcastRadius || 0x00);
-      builder.appendUInt8(frame.options || 0x00);
-      builder.appendBuffer(frame.data);
-    },
+export type OutgoingFrameOf<FT extends FrameType> = Extract<
+  OutgoingFrame,
+  { type: FT }
+>;
 
-    [C.FRAME_TYPE.CREATE_SOURCE_ROUTE]: function (
-      frame: {
-        type: C.FRAME_TYPE.CREATE_SOURCE_ROUTE;
-        /** sequence number of the frame */
-        id?: Uint8;
-        destination64: BufferConstructable; // 64-bit
-        destination16: BufferConstructable; // 16-bit
-        addresses: number[]; // max 30 addresses, 16 bit integer addresses
-      },
-      builder: BufferBuilder,
-    ) {
-      builder.appendUInt8(frame.type);
-      builder.appendUInt8(0); // Frame ID is always zero for this
-      builder.appendString(frame.destination64, 'hex');
-      builder.appendString(frame.destination16, 'hex');
-      builder.appendUInt8(0); // Route command options always zero
-      builder.appendUInt8(frame.addresses.length); // Number of hops
-      for (let i = 0; i < frame.addresses.length; i++) {
-        builder.appendUInt16BE(frame.addresses[i]);
-      }
-    },
+export class FrameBuilder {
+  #frameId = 0;
 
-    [C.FRAME_TYPE.TX_REQUEST_64]: function (
-      frame: {
-        type: C.FRAME_TYPE.TX_REQUEST_64;
-        /** sequence number of the frame */
-        id?: Uint8;
-        destination64?: BufferConstructable; // 64-bit
-        options?: number; // 0x00 is default
-        data: BufferConstructable;
-      },
-      builder: BufferBuilder,
-    ) {
-      builder.appendUInt8(frame.type);
-      builder.appendUInt8(this.getFrameId(frame));
-      builder.appendString(frame.destination64 || C.UNKNOWN_64, 'hex');
-      builder.appendUInt8(frame.options || 0x00);
-      builder.appendBuffer(frame.data);
-    },
+  nextFrameId(): number {
+    this.#frameId = this.#frameId >= 0xff ? 1 : this.#frameId + 1;
+    return this.#frameId;
+  }
 
-    [C.FRAME_TYPE.TX_REQUEST_16]: function (
-      frame: {
-        type: C.FRAME_TYPE.TX_REQUEST_16;
-        /** sequence number of the frame */
-        id?: Uint8;
-        destination16?: BufferConstructable; // 16-bit
-        options?: number; // 0x00 is default
-        data: BufferConstructable;
-      },
-      builder: BufferBuilder,
-    ) {
-      builder.appendUInt8(frame.type);
-      builder.appendUInt8(this.getFrameId(frame));
-      builder.appendString(frame.destination16 || C.BROADCAST_16_XB, 'hex');
-      builder.appendUInt8(frame.options || 0x00);
-      builder.appendBuffer(frame.data);
-    },
+  getFrameId(frame: { id?: Uint8 }): Uint8 {
+    if (frame.id == null) {
+      frame.id = this.nextFrameId();
+    }
+    return frame.id;
+  }
 
-    [C.FRAME_TYPE.ZIGBEE_RECEIVE_PACKET]: function (
-      frame: {
-        type: C.FRAME_TYPE.ZIGBEE_RECEIVE_PACKET;
-        sender64?: BufferConstructable; // 64-bit
-        sender16?: BufferConstructable; // 16-bit
-        receiveOptions?: Set<C.RECEIVE_OPTIONS>;
-        data: BufferConstructable;
-      },
-      builder: BufferBuilder,
-    ) {
-      builder.appendUInt8(frame.type);
-      builder.appendString(frame.sender64 || C.UNKNOWN_64, 'hex');
-      builder.appendString(frame.sender16 || C.UNKNOWN_16, 'hex');
-      builder.appendUInt8(
-        Array.from(frame.receiveOptions ?? []).reduce(
-          (result: number, b) => result | b,
-          0,
-        ),
+  has(type: FrameType): boolean {
+    return type in FrameBuilder.#handlers;
+  }
+
+  build(frame: OutgoingFrame, builder: BufferBuilder): void {
+    const handler = FrameBuilder.#handlers[frame.type];
+    if (!handler) {
+      throw new Error(
+        `Unsupported outgoing frame type: 0x${frame.type.toString(16)}`,
       );
-      builder.appendBuffer(frame.data);
+    }
+    handler(this, frame as never, builder);
+  }
+
+  static readonly #handlers: Partial<
+    Record<
+      FrameType,
+      (self: FrameBuilder, frame: OutgoingFrame, builder: BufferBuilder) => void
+    >
+  > = {
+    [FrameType.AtCommand]: (self, frame: OutgoingFrame, b) => {
+      const f = frame as AtCommandFrame;
+      b.appendUInt8(f.type);
+      b.appendUInt8(self.getFrameId(f));
+      b.appendString(f.command, 'utf8');
+      b.appendBuffer(f.commandParameter);
+    },
+    [FrameType.AtCommandQueueParameterValue]: (self, frame, b) => {
+      const f = frame as AtCommandFrame;
+      b.appendUInt8(f.type);
+      b.appendUInt8(self.getFrameId(f));
+      b.appendString(f.command, 'utf8');
+      b.appendBuffer(f.commandParameter);
+    },
+    [FrameType.RemoteAtCommandRequest]: (self, frame, b) => {
+      const f = frame as RemoteAtCommandFrame;
+      b.appendUInt8(f.type);
+      b.appendUInt8(self.getFrameId(f));
+      b.appendString(f.destination64 ?? UNKNOWN_64, 'hex');
+      b.appendString(f.destination16 ?? UNKNOWN_16, 'hex');
+      b.appendUInt8(f.remoteCommandOptions ?? 0x02);
+      b.appendString(f.command, 'utf8');
+      b.appendBuffer(f.commandParameter);
+    },
+    [FrameType.ZigbeeTransmitRequest]: (self, frame, b) => {
+      const f = frame as ZigbeeTransmitRequestFrame;
+      b.appendUInt8(f.type);
+      b.appendUInt8(self.getFrameId(f));
+      b.appendString(f.destination64 ?? UNKNOWN_64, 'hex');
+      b.appendString(f.destination16 ?? UNKNOWN_16, 'hex');
+      b.appendUInt8(f.broadcastRadius ?? 0x00);
+      b.appendUInt8(f.options ?? 0x00);
+      b.appendBuffer(f.data);
+    },
+    [FrameType.ExplicitAddressingZigbeeCommandFrame]: (self, frame, b) => {
+      const f = frame as ExplicitAddressingFrame;
+      b.appendUInt8(f.type);
+      b.appendUInt8(self.getFrameId(f));
+      b.appendString(f.destination64 ?? UNKNOWN_64, 'hex');
+      b.appendString(f.destination16 ?? UNKNOWN_16, 'hex');
+      b.appendUInt8(f.sourceEndpoint);
+      b.appendUInt8(f.destinationEndpoint);
+      if (typeof f.clusterId === 'number') b.appendUInt16BE(f.clusterId);
+      else b.appendString(f.clusterId, 'hex');
+      if (typeof f.profileId === 'number') b.appendUInt16BE(f.profileId);
+      else b.appendString(f.profileId, 'hex');
+      b.appendUInt8(f.broadcastRadius ?? 0x00);
+      b.appendUInt8(f.options ?? 0x00);
+      b.appendBuffer(f.data);
+    },
+    [FrameType.CreateSourceRoute]: (_self, frame, b) => {
+      const f = frame as CreateSourceRouteFrame;
+      b.appendUInt8(f.type);
+      b.appendUInt8(0); // Frame ID is always zero for this
+      b.appendString(f.destination64, 'hex');
+      b.appendString(f.destination16, 'hex');
+      b.appendUInt8(0); // Route command options always zero
+      b.appendUInt8(f.addresses.length);
+      for (const addr of f.addresses) {
+        b.appendUInt16BE(addr);
+      }
+    },
+    [FrameType.TxRequest64]: (self, frame, b) => {
+      const f = frame as TxRequest64Frame;
+      b.appendUInt8(f.type);
+      b.appendUInt8(self.getFrameId(f));
+      b.appendString(f.destination64 ?? UNKNOWN_64, 'hex');
+      b.appendUInt8(f.options ?? 0x00);
+      b.appendBuffer(f.data);
+    },
+    [FrameType.TxRequest16]: (self, frame, b) => {
+      const f = frame as TxRequest16Frame;
+      b.appendUInt8(f.type);
+      b.appendUInt8(self.getFrameId(f));
+      b.appendString(f.destination16 ?? BROADCAST_16_XB, 'hex');
+      b.appendUInt8(f.options ?? 0x00);
+      b.appendBuffer(f.data);
+    },
+    [FrameType.ZigbeeReceivePacket]: (_self, frame, b) => {
+      const f = frame as ZigbeeReceivePacketFrame;
+      b.appendUInt8(f.type);
+      b.appendString(f.sender64 ?? UNKNOWN_64, 'hex');
+      b.appendString(f.sender16 ?? UNKNOWN_16, 'hex');
+      b.appendUInt8(
+        Array.from(f.receiveOptions ?? []).reduce((acc, bit) => acc | bit, 0),
+      );
+      b.appendBuffer(f.data);
     },
   };
 }
-
-type FrameBuilder = ReturnType<typeof FrameBuilder>;
-export default FrameBuilder;
-
-type NewOmit<T, K extends PropertyKey> = {
-  [P in keyof T as Exclude<P, K>]: T[P];
-};
-export type BuildableFrame = Parameters<
-  FrameBuilder[keyof NewOmit<
-    FrameBuilder,
-    'frameId' | 'nextFrameId' | 'getFrameId'
-  >]
->[0];

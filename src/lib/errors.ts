@@ -1,33 +1,40 @@
 export interface ParseState {
   buffer: Uint8Array;
-  offset: number; // Offset in buffer
-  length: number; // Packet Length
-  total: number; // To test Checksum
-  checksum: number; // Checksum byte
-  b: number; // Working byte
-  escape_next: boolean; // For escaping in AP=2
+  offset: number;
+  length: number;
+  total: number;
+  checksum: number;
+  b: number;
+  escapeNext: boolean;
   waiting: boolean;
 }
 
 export class ChecksumMismatchError extends Error {
+  readonly name = 'ChecksumMismatchError';
   constructor(
     readonly parseState: ParseState,
-    readonly actual_checksum: number,
+    readonly actualChecksum: number,
   ) {
     super(
-      `Checksum mismatch: ${actual_checksum.toString(
+      `Checksum mismatch: ${actualChecksum.toString(
         16,
       )} != ${parseState.checksum.toString(16)}`,
     );
   }
 }
 
-export class UnknownFrameType extends Error {
+export class UnknownFrameTypeError extends Error {
+  readonly name = 'UnknownFrameTypeError';
   constructor(readonly frameType: number) {
     super(
-      `Frame parsing/building not supported for frame type ${frameType.toString(
-        16,
-      )}`,
+      `Frame parsing/building not supported for frame type 0x${frameType.toString(16)}`,
     );
+  }
+}
+
+export class XBeeTimeoutError extends Error {
+  readonly name = 'XBeeTimeoutError';
+  constructor(message = 'XBee operation timed out') {
+    super(message);
   }
 }

@@ -1,6 +1,8 @@
-const fs = require('fs');
-const path = require('path');
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
 const dist = path.join(root, 'dist');
 
@@ -11,8 +13,15 @@ delete pkg.scripts;
 delete pkg.devDependencies;
 delete pkg.packageManager;
 
+pkg.type = 'module';
 pkg.main = './index.js';
 pkg.types = './index.d.ts';
+pkg.exports = {
+  '.': {
+    types: './index.d.ts',
+    import: './index.js',
+  },
+};
 
 fs.writeFileSync(
   path.join(dist, 'package.json'),
