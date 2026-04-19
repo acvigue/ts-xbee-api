@@ -10,9 +10,20 @@ import { FrameType, SpecificParsableFrame } from '../index';
 import * as C from './constants';
 import { BufferReader } from './buffer-tools';
 
+type NodeIdentificationTarget = {
+  remote16: string;
+  remote64: string;
+  nodeIdentifier: string;
+  remoteParent16?: string;
+  deviceType?: number;
+  sourceEvent?: number;
+  digiProfileID?: string;
+  digiManufacturerID?: string;
+};
+
 const parseNodeIdentificationPayload = function (
-  frame: any,
-  reader: BufferReader
+  frame: NodeIdentificationTarget,
+  reader: BufferReader,
 ): void {
   frame.remote16 = reader.nextString(2, 'hex');
   frame.remote64 = reader.nextString(8, 'hex');
@@ -29,10 +40,17 @@ const parseNodeIdentificationPayload = function (
   }
 };
 
+type IOSampleTarget = {
+  digitalSamples?: Record<string, number>;
+  analogSamples?: Record<string, number>;
+  numSamples?: number;
+  commandStatus?: number;
+};
+
 const ParseIOSamplePayload = function (
-  frame: any,
+  frame: IOSampleTarget,
   reader: BufferReader,
-  options: { vref_adc?: number }
+  options: { vref_adc?: number },
 ): void {
   frame.digitalSamples = {};
   frame.analogSamples = {};
@@ -46,7 +64,7 @@ const ParseIOSamplePayload = function (
   if (mskD > 0) {
     const valD = reader.nextUInt16BE();
     for (const dbit of Object.keys(C.DIGITAL_CHANNELS.MASK).map(
-      Number
+      Number,
     ) as Array<keyof typeof C.DIGITAL_CHANNELS.MASK>) {
       if ((mskD & (1 << dbit)) >> dbit) {
         frame.digitalSamples[C.DIGITAL_CHANNELS.MASK[dbit][0]] =
@@ -67,7 +85,7 @@ const ParseIOSamplePayload = function (
         } else {
           // Convert to mV, resolution is < 1mV, so rounding is OK
           frame.analogSamples[C.ANALOG_CHANNELS.MASK[abit][0]] = Math.round(
-            (valA * options.vref_adc) / 1023
+            (valA * options.vref_adc) / 1023,
           );
         }
       }
@@ -78,7 +96,7 @@ const ParseIOSamplePayload = function (
 // Series 1 Support
 const received16BitPacketIO = function (
   frame: SpecificParsableFrame<FrameType.RX_PACKET_16_IO>,
-  reader: BufferReader
+  reader: BufferReader,
 ): void {
   const data = {
     sampleQuantity: reader.nextUInt8(),
@@ -144,7 +162,7 @@ const parseAtCommand = (
         command: C.AT_COMMAND;
         commandParameter: Uint8Array;
       },
-  reader: BufferReader
+  reader: BufferReader,
 ): void => {
   frame.id = reader.nextUInt8();
   frame.command = reader.nextString(2, 'utf8') as C.AT_COMMAND;
@@ -177,7 +195,7 @@ const frameParser = {
       sender16: string; // 16-bit
       receiveOptions: Uint8;
     } & NodeIdentification<string>,
-    reader: BufferReader
+    reader: BufferReader,
   ) => {
     frame.sender64 = reader.nextString(8, 'hex');
     frame.sender16 = reader.nextString(2, 'hex');
@@ -193,7 +211,7 @@ const frameParser = {
       receiveOptions: number;
       data: Uint8Array;
     },
-    reader: BufferReader
+    reader: BufferReader,
   ) => {
     frame.remote64 = reader.nextString(8, 'hex');
     frame.remote16 = reader.nextString(2, 'hex');
@@ -213,7 +231,7 @@ const frameParser = {
       receiveOptions: Uint8;
       data: Uint8Array;
     },
-    reader: BufferReader
+    reader: BufferReader,
   ) => {
     frame.remote64 = reader.nextString(8, 'hex');
     frame.remote16 = reader.nextString(2, 'hex');
@@ -244,7 +262,7 @@ const frameParser = {
         waterPresent: boolean;
       };
     },
-    reader: BufferReader
+    reader: BufferReader,
   ) => {
     frame.remote64 = reader.nextString(8, 'hex');
     frame.remote16 = reader.nextString(2, 'hex');
@@ -274,16 +292,20 @@ const frameParser = {
       frame.sensorValues.relativeHumidity =
         Math.round(
           100 *
-            ((frame.sensorValues.AD3 / frame.sensorValues.AD2 - 0.16) / 0.0062)
+            ((frame.sensorValues.AD3 / frame.sensorValues.AD2 - 0.16) / 0.0062),
         ) / 100;
     }
 
-    if (frame.sensors === 3) {
+    if (
+      frame.sensors === 3 &&
+      frame.sensorValues.relativeHumidity !== undefined &&
+      frame.sensorValues.temperature !== undefined
+    ) {
       frame.sensorValues.trueHumidity =
         Math.round(
           100 *
-            (frame.sensorValues.relativeHumidity! /
-              (1.0546 - 0.00216 * frame.sensorValues.temperature!))
+            (frame.sensorValues.relativeHumidity /
+              (1.0546 - 0.00216 * frame.sensorValues.temperature)),
         ) / 100;
     }
   },
@@ -293,7 +315,7 @@ const frameParser = {
       type: C.FRAME_TYPE.MODEM_STATUS;
       modemStatus: number;
     },
-    reader: BufferReader
+    reader: BufferReader,
   ) => {
     frame.modemStatus = reader.nextUInt8();
   },
@@ -314,12 +336,12 @@ const frameParser = {
         }
     ),
     reader: BufferReader,
-    options: { vref_adc?: number }
+    options: { vref_adc?: number },
   ) => {
     frame.remote64 = reader.nextString(8, 'hex');
     frame.remote16 = reader.nextString(2, 'hex');
     frame.receiveOptions = reader.nextUInt8();
-    ParseIOSamplePayload(frame, reader, options);
+    ParseIOSamplePayload(frame as unknown as IOSampleTarget, reader, options);
   },
 
   [C.FRAME_TYPE.AT_COMMAND_RESPONSE]: (
@@ -338,7 +360,7 @@ const frameParser = {
           commandData: Uint8Array;
         }
     ),
-    reader: BufferReader
+    reader: BufferReader,
   ) => {
     frame.id = reader.nextUInt8();
     frame.command = reader.nextString(2, 'utf8') as C.AT_COMMAND;
@@ -348,10 +370,14 @@ const frameParser = {
       frame.commandStatus === C.COMMAND_STATUS.OK &&
       reader.buf.length > reader.tell()
     ) {
-      (frame as any).nodeIdentification = {};
-      parseNodeIdentificationPayload((frame as any).nodeIdentification, reader);
+      const ndFrame = frame as unknown as {
+        nodeIdentification: NodeIdentificationTarget;
+      };
+      ndFrame.nodeIdentification = {} as NodeIdentificationTarget;
+      parseNodeIdentificationPayload(ndFrame.nodeIdentification, reader);
     } else {
-      (frame as any).commandData = reader.nextAll();
+      (frame as unknown as { commandData: Uint8Array }).commandData =
+        reader.nextAll();
     }
   },
 
@@ -374,7 +400,7 @@ const frameParser = {
         }
     ),
     reader: BufferReader,
-    options: { vref_adc?: number }
+    options: { vref_adc?: number },
   ) => {
     frame.id = reader.nextUInt8();
     frame.remote64 = reader.nextString(8, 'hex');
@@ -382,15 +408,19 @@ const frameParser = {
     frame.command = reader.nextString(2, 'utf8') as C.AT_COMMAND;
     frame.commandStatus = reader.nextUInt8();
     if (frame.command === 'IS') {
-      ParseIOSamplePayload(frame, reader, options);
+      ParseIOSamplePayload(frame as unknown as IOSampleTarget, reader, options);
     } else if (
       frame.command === 'ND' &&
       frame.commandStatus === C.COMMAND_STATUS.OK
     ) {
-      (frame as any).nodeIdentification = {};
-      parseNodeIdentificationPayload((frame as any).nodeIdentification, reader);
+      const ndFrame = frame as unknown as {
+        nodeIdentification: NodeIdentificationTarget;
+      };
+      ndFrame.nodeIdentification = {} as NodeIdentificationTarget;
+      parseNodeIdentificationPayload(ndFrame.nodeIdentification, reader);
     } else {
-      (frame as any).commandData = reader.nextAll();
+      (frame as unknown as { commandData: Uint8Array }).commandData =
+        reader.nextAll();
     }
   },
 
@@ -404,7 +434,7 @@ const frameParser = {
       deliveryStatus: number;
       discoveryStatus: number;
     },
-    reader: BufferReader
+    reader: BufferReader,
   ) => {
     frame.id = reader.nextUInt8();
     frame.remote16 = reader.nextString(2, 'hex');
@@ -422,7 +452,7 @@ const frameParser = {
       hopCount: Uint8;
       addresses: Uint16[];
     },
-    reader: BufferReader
+    reader: BufferReader,
   ) => {
     frame.remote64 = reader.nextString(8, 'hex');
     frame.remote16 = reader.nextString(2, 'hex');
@@ -448,7 +478,7 @@ const frameParser = {
       command: C.AT_COMMAND;
       commandParameter: Uint8Array;
     },
-    reader: BufferReader
+    reader: BufferReader,
   ) => {
     frame.id = reader.nextUInt8();
     frame.destination64 = reader.nextString(8, 'hex');
@@ -470,7 +500,7 @@ const frameParser = {
       options: Uint8;
       data: Uint8Array;
     },
-    reader: BufferReader
+    reader: BufferReader,
   ) => {
     frame.id = reader.nextUInt8();
     frame.destination64 = reader.nextString(8, 'hex');
@@ -495,7 +525,7 @@ const frameParser = {
       options: Uint8;
       data: Uint8Array;
     },
-    reader: BufferReader
+    reader: BufferReader,
   ) => {
     frame.id = reader.nextUInt8();
     frame.destination64 = reader.nextString(8, 'hex');
@@ -518,7 +548,7 @@ const frameParser = {
       options: number; // 0x00 is default
       data: Uint8Array;
     },
-    reader: BufferReader
+    reader: BufferReader,
   ) => {
     frame.id = reader.nextUInt8();
     frame.destination64 = reader.nextString(8, 'hex');
@@ -535,7 +565,7 @@ const frameParser = {
       options: number; // 0x00 is default
       data: Uint8Array;
     },
-    reader: BufferReader
+    reader: BufferReader,
   ) => {
     frame.id = reader.nextUInt8();
     frame.destination16 = reader.nextString(2, 'hex');
@@ -550,7 +580,7 @@ const frameParser = {
       id: Uint8;
       deliveryStatus: Uint8;
     },
-    reader: BufferReader
+    reader: BufferReader,
   ) => {
     frame.id = reader.nextUInt8();
     frame.deliveryStatus = reader.nextUInt8();
@@ -564,7 +594,7 @@ const frameParser = {
       receiveOptions: Uint8;
       data: Uint8Array;
     },
-    reader: BufferReader
+    reader: BufferReader,
   ) => {
     frame.remote64 = reader.nextString(8, 'hex');
     frame.rssi = reader.nextUInt8();
@@ -580,7 +610,7 @@ const frameParser = {
       receiveOptions: Uint8;
       data: Uint8Array;
     },
-    reader: BufferReader
+    reader: BufferReader,
   ) => {
     frame.remote16 = reader.nextString(2, 'hex');
     frame.rssi = reader.nextUInt8();
@@ -596,7 +626,7 @@ const frameParser = {
       receiveOptions: Uint8;
       data: Uint8Array;
     },
-    reader: BufferReader
+    reader: BufferReader,
   ) => {
     frame.remote64 = reader.nextString(8, 'hex');
     frame.rssi = reader.nextUInt8();
@@ -619,7 +649,7 @@ const frameParser = {
         digitalSamples: string[];
       };
     },
-    reader: BufferReader
+    reader: BufferReader,
   ) => {
     frame.remote16 = reader.nextString(2, 'hex');
     frame.rssi = reader.nextUInt8();

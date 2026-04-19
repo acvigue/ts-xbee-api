@@ -1,7 +1,12 @@
 // cross-platform buffer writer and reader. Eliminates dependency on buffer-builder and buffer-reader,
 // and avoids the need to use polyfills for nodejs Buffer in the browser.
 
-export type BufferConstructable = number[] | ArrayBuffer | Buffer | string;
+export type BufferConstructable =
+  | number[]
+  | ArrayBuffer
+  | Uint8Array
+  | Buffer
+  | string;
 
 type Encodings = 'utf8' | 'hex';
 
@@ -97,7 +102,7 @@ export class BufferBuilder {
 
   appendString(
     data: BufferConstructable,
-    encoding: Encodings = 'utf8'
+    encoding: Encodings = 'utf8',
   ): BufferBuilder {
     let buf: BufferConstructable = data;
     if (encoding === 'hex') {

@@ -200,7 +200,7 @@ describe('Stream Interface', () => {
         expect(frame.command).toEqual('SL');
         expect(frame.commandStatus).toEqual(0);
         expect(frame.commandData).toEqual(
-          Uint8Array.from([0x40, 0x52, 0x2b, 0xaa])
+          Uint8Array.from([0x40, 0x52, 0x2b, 0xaa]),
         );
       }
     });
@@ -216,7 +216,7 @@ describe('Stream Interface', () => {
     expect(mockserialW._write).toBeCalledWith(
       expected0,
       'buffer',
-      expect.anything()
+      expect.anything(),
     );
   });
 });
@@ -402,7 +402,7 @@ describe('API Frame Parsing', () => {
       if (frame.type === FrameType.RX_PACKET_16_IO) {
         expect(frame.remote16).toEqual('1234');
         expect(frame.data.analogSamples.length).toEqual(
-          frame.data.sampleQuantity
+          frame.data.sampleQuantity,
         );
         expect(frame.data.channelMask).toEqual(0x0e58);
       } else {

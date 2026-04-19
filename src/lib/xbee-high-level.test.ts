@@ -5,9 +5,7 @@ import { fromHex, toHex } from './buffer-tools';
 import * as C from './constants';
 import { XBee } from './xbee-high-level';
 
-function createMockStream(
-  mapping: Array<[string, string[]]>
-): stream.Duplex {
+function createMockStream(mapping: Array<[string, string[]]>): stream.Duplex {
   const targetStream = new stream.PassThrough();
   const duplex = new stream.Duplex({
     read() {
@@ -21,7 +19,9 @@ function createMockStream(
   targetStream.on('data', (data: Buffer) => {
     const hexData = toHex(data);
     expect(mapping.length, 'to be done receiving messages').toBeGreaterThan(0);
-    const [expected, responses] = mapping.shift()!;
+    const next = mapping.shift();
+    if (!next) throw new Error('no more mapped messages');
+    const [expected, responses] = next;
     expect(hexData).toEqual(expected);
     for (const response of responses) {
       duplex.push(fromHex(response));

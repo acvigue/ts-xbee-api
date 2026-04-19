@@ -32,7 +32,7 @@ export class XBee {
         },
         objectMode: true,
       }),
-    ])
+    ]),
   );
 
   private readonly builder: XBeeBuilder;
@@ -44,7 +44,8 @@ export class XBee {
     this.parser = new XBeeParser();
     serial.pipe(this.parser);
     this.parser.on('data', (frame: ParsableFrame) => {
-      this.frameStreams.get(frame.type)!.push(frame);
+      const stream = this.frameStreams.get(frame.type);
+      if (stream) stream.push(frame);
     });
   }
 
@@ -55,12 +56,15 @@ export class XBee {
 
   private filteredFrameStream<FT extends FrameType>(
     frameType: FT,
-    filter: (f: SpecificParsableFrame<FT>) => boolean
+    filter: (f: SpecificParsableFrame<FT>) => boolean,
   ): {
     stream: stream.Readable;
     close: () => void;
   } {
-    const frameStream = this.frameStreams.get(frameType)!;
+    const frameStream = this.frameStreams.get(frameType);
+    if (!frameStream) {
+      throw new Error(`No frame stream for frame type ${frameType}`);
+    }
     const readable = new stream.Readable({
       read() {
         return;
@@ -85,14 +89,17 @@ export class XBee {
 
   /** like awaitResponse, but throws if the expected message is not received */
   private async expectResponse<FT extends FrameType>(
-    params: AwaitResponseParams<FT>
+    params: AwaitResponseParams<FT>,
   ): Promise<SpecificParsableFrame<FT>> {
     const { stream, close } = this.filteredFrameStream(
       params.frameType,
-      params.filter
+      params.filter,
     );
     try {
-      return await awaitObjectStream(stream, params.timeoutMs);
+      return (await awaitObjectStream(
+        stream,
+        params.timeoutMs,
+      )) as SpecificParsableFrame<FT>;
     } finally {
       close();
     }
@@ -100,18 +107,18 @@ export class XBee {
 
   /** waits for the first response that matches the condition */
   private async awaitResponse<FT extends FrameType>(
-    params: AwaitResponseParams<FT>
+    params: AwaitResponseParams<FT>,
   ): Promise<SpecificParsableFrame<FT> | null> {
     try {
       return await this.expectResponse(params);
-    } catch (e) {
+    } catch {
       return null;
     }
   }
 
   private async expectParameterResponse(
     frameId: number,
-    timeoutMs: number
+    timeoutMs: number,
   ): Promise<SpecificParsableFrame<FrameType.AT_COMMAND_RESPONSE>> {
     return await this.expectResponse({
       timeoutMs,
@@ -126,7 +133,7 @@ export class XBee {
     parameter: C.AT_COMMAND,
     type: FrameType.AT_COMMAND_QUEUE_PARAMETER_VALUE | FrameType.AT_COMMAND,
     value: BufferConstructable | undefined,
-    timeoutMs: number
+    timeoutMs: number,
   ): Promise<void> {
     const frameId = this.builder.nextFrameId();
     const responsePromise = this.expectParameterResponse(frameId, timeoutMs);
@@ -145,14 +152,14 @@ export class XBee {
    * will end after 60 seconds.
    */
   public async *scanNetwork(
-    timeoutMs = 60_000
+    timeoutMs = 60_000,
   ): AsyncGenerator<SpecificParsableFrame<FrameType.AT_COMMAND_RESPONSE>> {
     await this.setParameter(C.AT_COMMAND.NT, [0x3c]);
 
     const frameId = this.builder.nextFrameId();
     const { stream: scanResponseStream, close } = this.filteredFrameStream(
       FrameType.AT_COMMAND_RESPONSE,
-      (f) => f.id === frameId
+      (f) => f.id === frameId,
     );
     this.builder.write({
       type: FrameType.AT_COMMAND,
@@ -186,33 +193,33 @@ export class XBee {
   async enqueueSetParameter(
     parameter: C.AT_COMMAND,
     value: BufferConstructable,
-    timeoutMs = 100
+    timeoutMs = 100,
   ): Promise<void> {
     await this.internalSetParameter(
       parameter,
       FrameType.AT_COMMAND_QUEUE_PARAMETER_VALUE,
       value,
-      timeoutMs
+      timeoutMs,
     );
   }
 
   async setParameter(
     parameter: C.AT_COMMAND,
     value: BufferConstructable | undefined,
-    timeoutMs = 100
+    timeoutMs = 100,
   ): Promise<void> {
     await this.internalSetParameter(
       parameter,
       FrameType.AT_COMMAND,
       value,
-      timeoutMs
+      timeoutMs,
     );
   }
 
   /** returns the parameter value has a hex string */
   async getParameter(
     parameter: C.AT_COMMAND,
-    timeoutMs = 100
+    timeoutMs = 100,
   ): Promise<string> {
     const frameId = this.builder.nextFrameId();
     const responsePromise = this.expectParameterResponse(frameId, timeoutMs);
@@ -269,7 +276,7 @@ export class XBee {
     remoteAddress: string,
     parameter: C.AT_COMMAND,
     value: BufferConstructable,
-    timeoutMs = 100
+    timeoutMs = 100,
   ): Promise<void> {
     const frameId = this.builder.nextFrameId();
     const response = this.expectResponse({
@@ -321,7 +328,9 @@ export class XBee {
    * SpecificParsableFrame<FT> for each frame received.
    */
   frameStream<FT extends FrameType>(frameType: FT): stream.Readable {
-    return this.frameStreams.get(frameType)!;
+    const s = this.frameStreams.get(frameType);
+    if (!s) throw new Error(`No frame stream for frame type ${frameType}`);
+    return s;
   }
 
   /**

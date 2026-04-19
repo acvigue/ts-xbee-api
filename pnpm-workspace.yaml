@@ -2,4 +2,3 @@ onlyBuiltDependencies:
   - '@parcel/watcher'
   - '@serialport/bindings-cpp'
   - esbuild
-  - nx
