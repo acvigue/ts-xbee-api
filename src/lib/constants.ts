@@ -32,6 +32,10 @@ export enum FrameType {
   AtCommandResponse = 0x88,
   ModemStatus = 0x8a,
   ZigbeeTransmitStatus = 0x8b,
+  /** [DigiMesh] Emitted when Enable Unicast NACK or Trace Route Enable is set. */
+  RouteInformation = 0x8d,
+  /** [DigiMesh] Emitted when a node receives an address update and modifies DH/DL. */
+  AggregateAddressingUpdate = 0x8e,
   ZigbeeReceivePacket = 0x90,
   ZigbeeExplicitRx = 0x91,
   ZigbeeIoDataSampleRx = 0x92,

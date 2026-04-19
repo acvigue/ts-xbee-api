@@ -46,3 +46,14 @@ export enum RxMode {
 
 /** Mask for extracting the transmission mode from a receive options byte. */
 export const RX_MODE_MASK = 0xc0;
+
+/**
+ * Values for the `sourceEvent` field of a Route Information frame (0x8D).
+ * Tells you which transmit option caused the frame to be emitted.
+ */
+export enum RouteInformationSourceEvent {
+  /** Emitted because `TxOption.EnableUnicastNack` was set. */
+  UnicastNack = 0x11,
+  /** Emitted because `TxOption.EnableUnicastTraceRoute` was set. */
+  TraceRoute = 0x12,
+}

@@ -432,6 +432,56 @@ const frameParser = {
     frame.discoveryStatus = reader.nextUInt8();
   },
 
+  [FrameType.RouteInformation]: (
+    frame: {
+      type: FrameType.RouteInformation;
+      /** `0x11` = Unicast NACK, `0x12` = Trace Route. */
+      sourceEvent: Uint8;
+      /** Length of the data bytes that follow. */
+      dataLength: Uint8;
+      /** Big-endian system timer value at the time of frame generation. */
+      timestamp: number;
+      ackTimeoutCount: Uint8;
+      txBlockedCount: Uint8;
+      reserved: Uint8;
+      destination64: string;
+      source64: string;
+      /** Address of the node that generated this route information frame. */
+      responder64: string;
+      /** Address of the node that received the original transmission. */
+      receiver64: string;
+    },
+    reader: BufferReader,
+  ) => {
+    frame.sourceEvent = reader.nextUInt8();
+    frame.dataLength = reader.nextUInt8();
+    frame.timestamp = reader.nextUInt32BE();
+    frame.ackTimeoutCount = reader.nextUInt8();
+    frame.txBlockedCount = reader.nextUInt8();
+    frame.reserved = reader.nextUInt8();
+    frame.destination64 = reader.nextString(8, 'hex');
+    frame.source64 = reader.nextString(8, 'hex');
+    frame.responder64 = reader.nextString(8, 'hex');
+    frame.receiver64 = reader.nextString(8, 'hex');
+  },
+
+  [FrameType.AggregateAddressingUpdate]: (
+    frame: {
+      type: FrameType.AggregateAddressingUpdate;
+      /** Always `0x00` in current DigiMesh firmware. */
+      formatId: Uint8;
+      /** New 64-bit aggregate address. */
+      newAddress64: string;
+      /** Previous 64-bit aggregate address that was replaced. */
+      oldAddress64: string;
+    },
+    reader: BufferReader,
+  ) => {
+    frame.formatId = reader.nextUInt8();
+    frame.newAddress64 = reader.nextString(8, 'hex');
+    frame.oldAddress64 = reader.nextString(8, 'hex');
+  },
+
   [FrameType.RouteRecord]: (
     frame: {
       type: FrameType.RouteRecord;

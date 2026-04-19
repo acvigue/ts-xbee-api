@@ -153,6 +153,18 @@ export class BufferReader {
     return result;
   }
 
+  nextUInt32BE(): number {
+    // Use multiplication for the top byte to stay within safe integer range
+    // (bitwise ops in JS coerce to signed 32-bit).
+    const result =
+      this._buffer[this._offset] * 0x01000000 +
+      (this._buffer[this._offset + 1] << 16) +
+      (this._buffer[this._offset + 2] << 8) +
+      this._buffer[this._offset + 3];
+    this._offset += 4;
+    return result;
+  }
+
   nextAll(): Uint8Array {
     const result = this._buffer.slice(this._offset);
     this._offset = this._buffer.length;

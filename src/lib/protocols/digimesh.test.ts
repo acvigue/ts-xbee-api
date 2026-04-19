@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { XBeeBuilder } from '../codec.js';
+import { XBeeBuilder, XBeeParser } from '../codec.js';
 import { FrameType } from '../constants.js';
 import type { OutgoingFrame } from '../frame-builder.js';
 import {
+  RouteInformationSourceEvent,
   RX_MODE_MASK,
   RxMode,
   RxOption,
@@ -105,5 +106,92 @@ describe('XBeeBuilder.buildFrame with DigiMesh options', () => {
     };
     const bytes = XBeeBuilder.buildFrame(frame);
     expect(bytes[16]).toBe(0x00);
+  });
+});
+
+describe('Route Information (0x8D) parsing', () => {
+  it('parses a NACK Route Information frame', () => {
+    // NACK (sourceEvent 0x11), timestamp 0x12345678, addresses filled in.
+    const raw = Uint8Array.from([
+      0x7e, 0x00, 0x2a, 0x8d, 0x11, 0x25, 0x12, 0x34, 0x56, 0x78, 0x01, 0x02,
+      0x00, 0x00, 0x13, 0xa2, 0x00, 0x40, 0xaa, 0xbb, 0xcc, 0x00, 0x13, 0xa2,
+      0x00, 0x40, 0x11, 0x22, 0x33, 0x00, 0x13, 0xa2, 0x00, 0x40, 0x44, 0x55,
+      0x66, 0x00, 0x13, 0xa2, 0x00, 0x40, 0x77, 0x88, 0x99, 0x23,
+    ]);
+    const parser = new XBeeParser();
+    return new Promise<void>((resolve, reject) => {
+      parser.once('data', (frame) => {
+        try {
+          expect(frame).toEqual({
+            type: FrameType.RouteInformation,
+            sourceEvent: RouteInformationSourceEvent.UnicastNack,
+            dataLength: 0x25,
+            timestamp: 0x12345678,
+            ackTimeoutCount: 0x01,
+            txBlockedCount: 0x02,
+            reserved: 0x00,
+            destination64: '0013a20040aabbcc',
+            source64: '0013a20040112233',
+            responder64: '0013a20040445566',
+            receiver64: '0013a20040778899',
+          });
+          resolve();
+        } catch (err) {
+          reject(err);
+        }
+      });
+      parser.write(raw);
+    });
+  });
+
+  it('recognizes the Trace Route source event', () => {
+    const raw = Uint8Array.from([
+      0x7e, 0x00, 0x2a, 0x8d, 0x12, 0x25, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
+      0x00, 0x00, 0x13, 0xa2, 0x00, 0x40, 0xaa, 0xbb, 0xcc, 0x00, 0x13, 0xa2,
+      0x00, 0x40, 0x11, 0x22, 0x33, 0x00, 0x13, 0xa2, 0x00, 0x40, 0x44, 0x55,
+      0x66, 0x00, 0x13, 0xa2, 0x00, 0x40, 0x77, 0x88, 0x99, 0x38,
+    ]);
+    const parser = new XBeeParser();
+    return new Promise<void>((resolve, reject) => {
+      parser.once('data', (frame) => {
+        try {
+          expect(frame).toMatchObject({
+            type: FrameType.RouteInformation,
+            sourceEvent: RouteInformationSourceEvent.TraceRoute,
+            timestamp: 1,
+          });
+          resolve();
+        } catch (err) {
+          reject(err);
+        }
+      });
+      parser.write(raw);
+    });
+  });
+});
+
+describe('Aggregate Addressing Update (0x8E) parsing', () => {
+  it('parses new and old aggregate addresses', () => {
+    const raw = Uint8Array.from([
+      0x7e, 0x00, 0x12, 0x8e, 0x00, 0x00, 0x13, 0xa2, 0x00, 0x40, 0xaa, 0xbb,
+      0xcc, 0x00, 0x13, 0xa2, 0x00, 0x40, 0x11, 0x22, 0x33, 0xf0,
+    ]);
+    const parser = new XBeeParser();
+    return new Promise<void>((resolve, reject) => {
+      parser.once('data', (frame) => {
+        try {
+          expect(frame).toEqual({
+            type: FrameType.AggregateAddressingUpdate,
+            formatId: 0x00,
+            newAddress64: '0013a20040aabbcc',
+            oldAddress64: '0013a20040112233',
+          });
+          resolve();
+        } catch (err) {
+          reject(err);
+        }
+      });
+      parser.write(raw);
+    });
   });
 });
