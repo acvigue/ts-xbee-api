@@ -1,7 +1,7 @@
 {
   "name": "@acvigue/ts-xbee-api",
   "description": "Node.js library for communicating with XBee/ZigBee devices in API mode",
-  "version": "4.0.2",
+  "version": "4.0.3",
   "homepage": "https://github.com/acvigue/ts-xbee-api",
   "license": "MIT",
   "type": "module",

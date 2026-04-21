@@ -114,6 +114,77 @@ describe('XBee', () => {
     ).rejects.toThrow();
     xbee.close();
   });
+
+  it('transmit resolves with ZigbeeTransmitStatus frame data', async () => {
+    const mockStream = createMockStream([
+      [
+        '7e001210010013a20040aacaf8fffe0000deadbeef58',
+        ['7e00078b01ffff00000075'],
+      ],
+    ]);
+    const xbee = new XBee(mockStream);
+    const result = await xbee.transmit(
+      Uint8Array.from([0xde, 0xad, 0xbe, 0xef]),
+      '0013a20040aacaf8',
+    );
+    expect(result).toEqual({
+      deliveryStatus: 0,
+      transmitRetryCount: 0,
+      discoveryStatus: 0,
+      remote16: 'ffff',
+    });
+    xbee.close();
+  });
+
+  it('transmit serializes TX Requests on prior TX Status', async () => {
+    const mockStream = createMockStream([
+      [
+        '7e001210010013a20040aacaf8fffe0000deadbeef58',
+        ['7e00078b01ffff00000075'],
+      ],
+      ['7e001010020013a20040aacaf8fffe0000123449', ['7e00078b02ffff02010071']],
+    ]);
+    const xbee = new XBee(mockStream);
+
+    // Both promises are created simultaneously; the second must not write
+    // until the first's TX Status comes back. createMockStream's expectation
+    // order enforces this — if the second frame hit the wire first, the
+    // hex match for expected #1 would fail.
+    const [r1, r2] = await Promise.all([
+      xbee.transmit(
+        Uint8Array.from([0xde, 0xad, 0xbe, 0xef]),
+        '0013a20040aacaf8',
+      ),
+      xbee.transmit(Uint8Array.from([0x12, 0x34]), '0013a20040aacaf8'),
+    ]);
+
+    expect(r1.deliveryStatus).toEqual(0);
+    expect(r2.deliveryStatus).toEqual(1);
+    expect(r2.transmitRetryCount).toEqual(2);
+    xbee.close();
+  });
+
+  it('transmit rejects on timeout but still releases the next TX', async () => {
+    const mockStream = createMockStream([
+      // First TX: write goes out but no status response — will time out.
+      ['7e001210010013a20040aacaf8fffe0000deadbeef58', []],
+      // Second TX: proceeds once the first's wait aborts, gets its status.
+      ['7e001010020013a20040aacaf8fffe0000123449', ['7e00078b02ffff02010071']],
+    ]);
+    const xbee = new XBee(mockStream);
+
+    const p1 = xbee.transmit(
+      Uint8Array.from([0xde, 0xad, 0xbe, 0xef]),
+      '0013a20040aacaf8',
+      { timeoutMs: 20 },
+    );
+    const p2 = xbee.transmit(Uint8Array.from([0x12, 0x34]), '0013a20040aacaf8');
+
+    await expect(p1).rejects.toThrow();
+    const r2 = await p2;
+    expect(r2.deliveryStatus).toEqual(1);
+    xbee.close();
+  });
 });
 
 describe('Address64', () => {

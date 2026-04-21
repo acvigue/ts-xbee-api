@@ -38,6 +38,21 @@ export interface TransmitOptions {
   destination16?: string;
 }
 
+/** Result of a successful {@link XBee.transmit}. */
+export interface TransmitResult {
+  /**
+   * Coordinator's delivery status for the transmission. `0x00` is success;
+   * any other value is a failure code (see {@link DeliveryStatus}).
+   */
+  deliveryStatus: number;
+  /** Application-layer retries the coordinator performed before giving up. */
+  transmitRetryCount: number;
+  /** Discovery status bit-field (route/address discovery info). */
+  discoveryStatus: number;
+  /** 16-bit destination network address the coordinator ultimately used. */
+  remote16: string;
+}
+
 /**
  * A promise-based, AbortSignal-aware interface to an XBee module over a
  * bidirectional byte stream (e.g. a `serialport` or a TCP socket).
@@ -50,6 +65,16 @@ export class XBee implements AsyncDisposable, Disposable {
   readonly #defaultTimeoutMs: number;
 
   #lastModemStatus: IncomingFrameOf<FrameType.ModemStatus> | null = null;
+
+  /**
+   * Tail of the outbound ZigbeeTransmitRequest chain. Each call to
+   * {@link transmit} awaits this promise before writing, then replaces it
+   * with its own "done" promise. The effect is strict FIFO: the next TX
+   * Request only hits the wire after the previous TX Status arrives
+   * (or times out / aborts), so pacing is adaptive to the coordinator's
+   * actual throughput rather than a guessed inter-frame delay.
+   */
+  #txTail: Promise<void> = Promise.resolve();
 
   constructor(serial: stream.Duplex, options: XBeeOptions = {}) {
     this.#serial = serial;
@@ -257,20 +282,65 @@ export class XBee implements AsyncDisposable, Disposable {
     await responsePromise;
   }
 
-  /** Sends `data` to the given 64-bit destination address. */
+  /**
+   * Sends `data` to the given 64-bit destination and resolves when the
+   * coordinator's TX Status frame arrives (matched by frame ID). Rejects
+   * on timeout/abort.
+   *
+   * Concurrent calls are serialized internally: the next TX Request is not
+   * written to the stream until the previous call's TX Status has been
+   * received (or its wait aborted). This gates pacing on the coordinator's
+   * own ack instead of a fixed inter-frame delay.
+   *
+   * The returned {@link TransmitResult} carries the raw `deliveryStatus`;
+   * a non-zero value indicates a coordinator-reported delivery failure.
+   * Callers that want to treat failure as an exception should check it.
+   */
   transmit(
     data: Uint8Array,
     destination: Address64 | string,
-    opts: TransmitOptions = {},
-  ): void {
-    this.#builder.write({
-      type: FrameType.ZigbeeTransmitRequest,
-      destination64: addressToHex(destination),
-      destination16: opts.destination16 ?? 'fffe',
-      broadcastRadius: opts.broadcastRadius ?? 0,
-      options: opts.options ?? 0,
-      data,
+    opts: TransmitOptions & RequestOptions = {},
+  ): Promise<TransmitResult> {
+    const waitForTurn = this.#txTail;
+    let releaseTurn!: () => void;
+    this.#txTail = new Promise<void>((resolve) => {
+      releaseTurn = resolve;
     });
+
+    return (async () => {
+      try {
+        // Prior rejections shouldn't poison subsequent sends — each TX
+        // is independent once the wire is free.
+        await waitForTurn.catch(() => undefined);
+
+        const frameId = this.#builder.nextFrameId();
+        const statusPromise = this.#awaitFrame(
+          FrameType.ZigbeeTransmitStatus,
+          (f) => f.id === frameId,
+          opts,
+        );
+
+        this.#builder.write({
+          type: FrameType.ZigbeeTransmitRequest,
+          id: frameId,
+          destination64: addressToHex(destination),
+          destination16: opts.destination16 ?? 'fffe',
+          broadcastRadius: opts.broadcastRadius ?? 0,
+          options: opts.options ?? 0,
+          data,
+        });
+
+        const status = await statusPromise;
+        return {
+          deliveryStatus: status.deliveryStatus,
+          transmitRetryCount: status.transmitRetryCount,
+          discoveryStatus: status.discoveryStatus,
+          remote16: status.remote16,
+        };
+      } finally {
+        releaseTurn();
+      }
+    })();
   }
 
   /**
